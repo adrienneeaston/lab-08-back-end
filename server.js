@@ -10,7 +10,7 @@ const pg = require('pg');
 //Application setup
 const app = express();
 app.use(cors()); //tell express to use cors
-const PORT = process.env.PORT;
+const PORT = process.env.PORT || 3000;
 //Connect to DATABASE
 const client = new pg.Client(process.env.DATABASE_URL);
 client.connect();
@@ -84,7 +84,7 @@ function getWeather(request, response) {
         return superagent.get(url)
           .then(weatherResults => {
             if (!weatherResults.body.daily.data.length) { throw 'NO DATA'; }
-          else {
+            else {
               const weatherSummaries = weatherResults.body.daily.data.map(day => {
                 let summary = new Weather(day);
                 summary.id = query;
@@ -106,16 +106,37 @@ function Weather(day) {
   this.time = new Date(day.time * 1000).toString().slice(0, 15);
 }
 function getEvent(request, response) {
-  //give url for Eventbrite API
-  const url = `https://www.eventbriteapi.com/v3/events/search/?token=${process.env.EVENTBRITE_API_KEY}&location.latitude=${request.query.data.latitude}&location.longitude=${request.query.data.longitude}`;
-  superagent.get(url)
+  let query = request.query.data.id;
+  let sql = `SELECT * FROM events WHERE search_query=$1;`;
+  let values = [query];
+  client.query(sql, values)
     .then(result => {
-      const eventSummaries = result.body.events.map(events => new Event(events));
-      console.log(eventSummaries)
-      response.send(eventSummaries);
+      if (result.rowCount > 0) {
+        response.send(result.rows);
+      }
+      else {
+        const url = `https://www.eventbriteapi.com/v3/events/search/?token=${process.env.EVENTBRITE_API_KEY}&location.latitude=${request.query.data.latitude}&location.longitude=${request.query.data.longitude}`;
+        return superagent.get(url)
+          .then(eventResults => {
+            if (!eventResults.body.events.data.length) { throw 'NO DATA'; }
+            else {
+              const eventSummaries = eventResults.body.events.data.map(events => {
+                let summary = new Event(events);
+                summary.id = query;
+                let newSQL = `INSERT INTO events (link, name, host, event_date, location_id) VALUES($1, $2, $3, $4, $5);`;
+                let newValues = Object.values(summary);
+                client.query(newSQL, newValues);
+                return summary;
+              });
+
+              response.send(eventSummaries);
+            }
+          })
+          .catch(err => handleError(err, response));
+      }
     })
-    .catch(err => handleError(err, response));
 }
+
 function Event(event) {
   this.link = event.url;
   this.name = event.name.text;
@@ -128,3 +149,13 @@ function handleError(err, response) {
   console.log(err);
   if (response) response.status(500).send('Sorry something went wrong');
 }
+  //   //give url for Eventbrite API
+  //   const url = `https://www.eventbriteapi.com/v3/events/search/?token=${process.env.EVENTBRITE_API_KEY}&location.latitude=${request.query.data.latitude}&location.longitude=${request.query.data.longitude}`;
+  //   superagent.get(url)
+  //     .then(result => {
+  //       const eventSummaries = result.body.events.map(events => new Event(events));
+  //       console.log(eventSummaries)
+  //       response.send(eventSummaries);
+  //     })
+  //     .catch(err => handleError(err, response));
+  // }
